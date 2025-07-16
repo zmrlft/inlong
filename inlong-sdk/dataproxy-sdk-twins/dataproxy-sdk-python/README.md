@@ -50,14 +50,37 @@ Go to the `dataproxy-sdk-python` root directory, and run the following commands:
 chmod +x ./build.sh
 ./build.sh
 ```
-When the .so file is generated, you will see the following message, you can choose to enter the target directory for the .so files. By default, the .so file will be copied to the system python site-packages directory:
 
-```txt
-Your system's Python site-packages directory is: xxx/xxx
-Enter the target directory for the .so files (Press Enter to use the default site-packages directory):
+When the .so file is generated, the script will automatically detect if you are in a virtual environment. Based on the detection result, you'll see one of the following prompts:
+
+#### In a virtual environment:
+```
+Detected virtual environment: /path/to/your/venv
+Virtual environment site-packages: /path/to/your/venv/lib/pythonX.Y/site-packages
+Your system's existing Python site-packages directories are:
+  /usr/lib/pythonX.Y/site-packages
+  ...
+
+Please select the installation location for the .so files:
+1. Virtual environment site-packages directory: /path/to/your/venv/lib/pythonX.Y/site-packages
+2. System site-packages directories
+3. Custom directory
+Enter your choice (1-3):
 ```
 
-After the build process finished, you can import the package (`import inlong_dataproxy`) in your python project to use InLong dataproxy.
+#### Without a virtual environment:
+```
+Your system's existing Python site-packages directories are:
+  /usr/lib/pythonX.Y/site-packages
+  ...
+
+Please select the installation location for the .so files:
+1. System site-packages directories
+2. Custom directory
+Enter your choice (1-2):
+```
+
+Choose the appropriate option based on your needs. After the build process finishes, you can import the package (`import inlong_dataproxy`) in your Python project to use InLong dataproxy.
 
 > **Note**: When the C++ SDK or the version of Python you're using is updated, you'll need to rebuild it by the above steps.
 
@@ -124,6 +147,22 @@ Follow these steps to use the DataProxy Python SDK:
    ```
 
 4. **Function return values**: The functions mentioned above return 0 if they are successful, and a non-zero value indicates failure. Make sure to check the return values to ensure proper execution.
+
+## Using in Virtual Environments
+
+The SDK now fully supports installation and usage within Python virtual environments:
+
+1. **Automatic Detection**: The build script automatically detects when it's being run from within a virtual environment (venv, virtualenv, etc.).
+
+2. **Installation Options**: During installation, you can choose to:
+   - Install to the virtual environment's site-packages directory (recommended when using a virtual environment)
+   - Install to the system-wide site-packages directories
+   - Specify a custom installation directory
+
+3. **Best Practices**:
+   - When working within a virtual environment, choose option 1 to install to the virtual environment's site-packages
+   - This ensures that the SDK is available to your virtual environment without affecting the system Python installation
+   - For system-wide availability, choose option 2
 
 ## Demo
 

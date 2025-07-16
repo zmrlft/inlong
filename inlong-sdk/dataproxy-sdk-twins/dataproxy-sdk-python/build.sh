@@ -107,8 +107,57 @@ mkdir "$PY_SDK_DIR/build" && cd "$PY_SDK_DIR/build"
 cmake "$PY_SDK_DIR"
 make -j 4
 
+# Check for virtual environment
+VIRTUAL_ENV_PATH=""
+VIRTUAL_ENV_SITE_PACKAGES=""
+
+# Check if VIRTUAL_ENV variable is set
+if [ -n "$VIRTUAL_ENV" ]; then
+    VIRTUAL_ENV_PATH="$VIRTUAL_ENV"
+    echo "Detected virtual environment: $VIRTUAL_ENV_PATH"
+    # Get virtual environment's site-packages directory
+    VIRTUAL_ENV_SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+    
+    # Double-check if the path is actually in the virtual environment
+    if [[ "$VIRTUAL_ENV_SITE_PACKAGES" == *"$VIRTUAL_ENV_PATH"* ]]; then
+        echo "Virtual environment site-packages: $VIRTUAL_ENV_SITE_PACKAGES"
+    else
+        # If not found using getsitepackages(), try another approach
+        VIRTUAL_ENV_SITE_PACKAGES="$VIRTUAL_ENV_PATH/lib/python$PYTHON_VERSION/site-packages"
+        if [ -d "$VIRTUAL_ENV_SITE_PACKAGES" ]; then
+            echo "Virtual environment site-packages: $VIRTUAL_ENV_SITE_PACKAGES"
+        else
+            echo "Warning: Could not determine virtual environment site-packages directory."
+            VIRTUAL_ENV_SITE_PACKAGES=""
+        fi
+    fi
+else
+    # Check for common virtual environment indicators if VIRTUAL_ENV is not set
+    PYTHON_PATH=$(which python)
+    if [[ "$PYTHON_PATH" == *"/venv/"* ]] || [[ "$PYTHON_PATH" == *"/virtualenv/"* ]] || [[ "$PYTHON_PATH" == *"/.virtualenvs/"* ]]; then
+        VIRTUAL_ENV_PATH=$(dirname $(dirname "$PYTHON_PATH"))
+        echo "Detected virtual environment: $VIRTUAL_ENV_PATH"
+        
+        # Try to find site-packages directory using sysconfig
+        VIRTUAL_ENV_SITE_PACKAGES=$(python -c "import sysconfig; print(sysconfig.get_paths().get('platlib'))" 2>/dev/null)
+        
+        if [ -d "$VIRTUAL_ENV_SITE_PACKAGES" ] && [[ "$VIRTUAL_ENV_SITE_PACKAGES" == *"$VIRTUAL_ENV_PATH"* ]]; then
+            echo "Virtual environment site-packages: $VIRTUAL_ENV_SITE_PACKAGES"
+        else
+            # Try alternative approach
+            VIRTUAL_ENV_SITE_PACKAGES="$VIRTUAL_ENV_PATH/lib/python$PYTHON_VERSION/site-packages"
+            if [ -d "$VIRTUAL_ENV_SITE_PACKAGES" ]; then
+                echo "Virtual environment site-packages: $VIRTUAL_ENV_SITE_PACKAGES"
+            else
+                echo "Warning: Could not determine virtual environment site-packages directory."
+                VIRTUAL_ENV_SITE_PACKAGES=""
+            fi
+        fi
+    fi
+fi
+
 # Get all existing Python site-packages directories
-SITE_PACKAGES_DIRS=($(python -c "import site,os; print(' '.join([p for p in site.getsitepackages() if os.path.isdir(p)]))"))
+SITE_PACKAGES_DIRS=($(python -c "import site,os; print(' '.join([p for p in site.getsitepackages() if os.path.isdir(p)]))" 2>/dev/null))
 
 # Check if the SITE_PACKAGES_DIRS array is not empty
 if [ ${#SITE_PACKAGES_DIRS[@]} -ne 0 ]; then
@@ -118,25 +167,100 @@ if [ ${#SITE_PACKAGES_DIRS[@]} -ne 0 ]; then
         echo "  $dir"
     done
 else
-    # If empty, warn the user and prompt them to enter the target directory in the next step
-    echo "Warn: No existing site-packages directories found, please enter the target directory for the .so files in the following step!"
+    # If empty, warn the user 
+    echo "Warning: No system site-packages directories found."
 fi
 
-# Prompt user for the target directory for .so files
-read -r -p "Enter the target directory for the .so files (Press Enter to use all above site-packages directories): " target_dir
+# Function to copy .so files to a directory
+copy_so_files_to() {
+    local target=$1
+    echo "Copying .so files to $target"
+    find "$PY_SDK_DIR/build" -name "*.so" -print0 | xargs -0 -I {} cp {} "$target"
+}
 
-# If user input is empty, use all found site-packages directories
-if [ -z "$target_dir" ]; then
-    for dir in "${SITE_PACKAGES_DIRS[@]}"; do
-        echo "Copying .so files to $dir"
-        # Find all .so files in $PY_SDK_DIR/build and copy them to the current site-packages directory
-        find "$PY_SDK_DIR/build" -name "*.so" -print0 | xargs -0 -I {} cp {} "$dir"
-    done
-else
-    # If user specified a directory, copy .so files there
-    echo "Copying .so files to $target_dir"
-    find "$PY_SDK_DIR/build" -name "*.so" -print0 | xargs -0 -I {} cp {} "$target_dir"
+# Collect available installation options
+options=()
+options_description=()
+
+# Check if virtual environment site-packages is available
+if [ -n "$VIRTUAL_ENV_SITE_PACKAGES" ]; then
+    options+=("venv")
+    options_description+=("Virtual environment site-packages directory: $VIRTUAL_ENV_SITE_PACKAGES")
 fi
+
+# Check if system site-packages are available
+if [ ${#SITE_PACKAGES_DIRS[@]} -ne 0 ]; then
+    options+=("system")
+    options_description+=("System site-packages directories")
+fi
+
+# Custom directory option is always available
+options+=("custom")
+options_description+=("Custom directory")
+
+# Display available options to user
+echo ""
+echo "Please select the installation location for the .so files:"
+for i in "${!options[@]}"; do
+    echo "$((i+1)). ${options_description[$i]}"
+done
+
+# Get user choice
+read -r -p "Enter your choice (1-${#options[@]}): " user_choice
+
+# Process user choice
+if ! [[ "$user_choice" =~ ^[0-9]+$ ]] || [ "$user_choice" -lt 1 ] || [ "$user_choice" -gt "${#options[@]}" ]; then
+    echo "Invalid choice. Please enter a number between 1 and ${#options[@]}."
+    
+    # Default to the first available option
+    if [ ${#options[@]} -gt 0 ]; then
+        echo "Using default: ${options_description[0]}"
+        user_choice=1
+    else
+        echo "No valid installation options available. Exiting."
+        exit 1
+    fi
+fi
+
+# Convert to zero-based index
+selection=$((user_choice-1))
+chosen_option=${options[$selection]}
+
+# Process the selected option
+case "$chosen_option" in
+    "venv")
+        # Install to virtual environment site-packages
+        copy_so_files_to "$VIRTUAL_ENV_SITE_PACKAGES"
+        ;;
+    "system")
+        # Install to all system site-packages
+        echo "Installing to system site-packages directories:"
+        for dir in "${SITE_PACKAGES_DIRS[@]}"; do
+            copy_so_files_to "$dir"
+        done
+        ;;
+    "custom")
+        # Install to user-specified directory
+        read -r -p "Enter the custom directory path for the .so files: " target_dir
+        
+        # Check if the directory exists, create if necessary
+        if [ ! -d "$target_dir" ]; then
+            read -r -p "Directory does not exist. Create it? (y/n): " create_dir
+            if [[ "$create_dir" =~ ^[Yy]$ ]]; then
+                mkdir -p "$target_dir"
+            else
+                echo "Installation cancelled."
+                exit 1
+            fi
+        fi
+        
+        copy_so_files_to "$target_dir"
+        ;;
+    *)
+        echo "Unexpected option. Installation failed."
+        exit 1
+        ;;
+esac
 
 # Clean the cpp dataproxy directory
 rm -r "$PY_SDK_DIR/dataproxy-sdk-cpp"
